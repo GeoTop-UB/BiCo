@@ -18,9 +18,11 @@ The only prerequisites for using this Sage script are to have both [Python](http
 attach("bigraded_complexes.py.sage")
 ```
 
-## Example
+## Examples
 
-The following is an example of usage of the Sage script. It loads the predefined Bigraded Complex associated to the Kodaira-Thurston manifold and displays its Aeppli cohomology in ascii art form.
+### Example 1
+
+In this example, the predefined Bigraded Complex associated to the Kodaira-Thurston manifold is loaded, and its Aeppli cohomology is displayed in ascii art form.
 
 *Input:*
 
@@ -42,6 +44,45 @@ Aeppli cohomology:
 0  |  [1]             |  [a], [b]                      |  [a*b]          
 ---+------------------+--------------------------------+-------------------
    |  0               |  1                             |  2              
+```
+
+### Example 2
+
+In this example, an instance of the ```BidifferentialBigradedCommutativeAlgebra``` class representing the Iwasawa manifold is constructed. The product $\mu_3(ab\overline{a}, \overline{b}, \overline{a}) = c \overline{ac}$ is computed, where $\mu_3$ denotes the pluripotential arity-3 product (for some choice of homotopy transfer data).
+
+*Input:*
+
+```sage
+attach("bigraded_complexes.py.sage")
+QQi = QuadraticField(-1, 'I')
+lie_algebra = LieAlgebra(QQi, 'p,ip,q,iq,z,iz', {
+            ('p','q'): {'z':1},
+            ('p', 'iq'): {'iz':1},
+            ('ip','q'): {'iz':1},
+            ('ip', 'iq'): {'z':-1}
+        })
+acs = Matrix(QQi,6,[
+            [0,1,0,0,0,0],
+            [-1,0,0,0,0,0],
+            [0,0,0,1,0,0],
+            [0,0,-1,0,0,0],
+            [0,0,0,0,0,1],
+            [0,0,0,0,-1,0]
+        ])
+names = ['a','b','c','abar','bbar','cbar']
+Iwasawa = BidifferentialBigradedCommutativeAlgebra.from_nilmanifold(lie_algebra, acs, names, normalization_coefficients=[1/2,1,1,1/2,1,1])
+Iwasawa.algebra().inject_variables()
+values = Iwasawa.operation(arity=3, operation_bidegree=(-1,-1))
+print(values[(a*b*abar, bbar, abar)])
+```
+
+It should be noted that the normalization coefficients are purely cosmetic. These are introduced to match the generators used in the literature for the bigraded algebra of the Iwasawa manifold.
+
+*Output:*
+
+```txt
+Defining a, b, c, abar, bbar, cbar
+c*abar*cbar          
 ```
 
 ## Citation
