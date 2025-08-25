@@ -1669,7 +1669,7 @@ class BigradedComplex():
 ############ Zig-zags and squares ###############
 
     # Zigzags
-    def zigzags_basis(self, bidegree, raw=False):
+    def zigzags_basis(self, bidegree=None, raw=False):
         r"""
         Return a basis for the zigzags at the specified bidegree.
 
@@ -1708,16 +1708,24 @@ class BigradedComplex():
              (0, 0, 0, 1, 0, 0, 0, 0, 0),
              (0, 0, 0, 0, 1, 0, 0, 0, 0)]
         """
-        if bidegree not in self.__zigzags_basis:
-            reduced_aeppli = self.reduced_aeppli_cohomology_raw(bidegree)
-            bottchern = self.bottchern_cohomology_raw(bidegree)
-            self.__zigzags_basis[bidegree] = [reduced_aeppli.lift(b) for b in reduced_aeppli.basis()] + [bottchern.lift(b) for b in bottchern.basis()]
-        if raw == True or self.names() == None:
-            return self.__zigzags_basis[bidegree]
+        if bidegree != None:
+            if bidegree not in self.__zigzags_basis:
+                reduced_aeppli = self.reduced_aeppli_cohomology_raw(bidegree)
+                bottchern = self.bottchern_cohomology_raw(bidegree)
+                self.__zigzags_basis[bidegree] = [reduced_aeppli.lift(b) for b in reduced_aeppli.basis()] + [bottchern.lift(b) for b in bottchern.basis()]
+            if raw == True or self.names() == None:
+                return self.__zigzags_basis[bidegree]
+            else:
+                return [self.element(bidegree, b) for b in self.__zigzags_basis[bidegree]]
         else:
-            return [self.element(bidegree, b) for b in self.__zigzags_basis[bidegree]]
+            for bidegree in self.bidegrees():
+                self.zigzags_basis(bidegree=bidegree, raw=True)
+            if raw == True:
+                return self.__zigzags_basis
+            else:
+                return {bidegree: [self.element(bidegree, b) for b in self.__zigzags_basis[bidegree]] for bidegree in self.bidegrees()}
 
-    def zigzags(self, bidegree, raw=False):
+    def zigzags(self, bidegree=None, raw=False):
         r"""
         Return a vector space of zigzags at the specified bidegree.
 
@@ -1744,10 +1752,80 @@ class BigradedComplex():
             [1 0]
             [0 1]
         """
-        if raw == True or self.names() == None:
-            return VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.zigzags_basis(bidegree, raw=True))
+        if bidegree != None:
+            if raw == True or self.names() == None:
+                return VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.zigzags_basis(bidegree, raw=True))
+            else:
+                return VectorSpace(self.base(), self.zigzags_basis(bidegree))
         else:
-            return VectorSpace(self.base(), self.zigzags_basis(bidegree))
+            return {bidegree: self.zigzags(bidegree=bidegree, raw=raw) for bidegree in self.bidegrees()}        
+
+    # Compute the zigzags decomposition
+    # WARNING: THIS FUNCTION DOES NOT WORK PROPERLY!
+    def zigzags_decomposition(self, raw=False):
+        if raw == True:
+            endpoints_redundant = {}
+            for bidegree in self.bidegrees():
+                complementary_basis = []
+                dell_coboundaries = list(self.dell_coboundaries(bidegree=bidegree, raw=True).basis())
+                for i in range(self.dimension(bidegree)):
+                    v = vector([i == j for j in range(self.dimension(bidegree))])
+                    if v not in VectorSpace(self.base(), self.dimension(bidegree)).subspace(dell_coboundaries + complementary_basis):
+                        complementary_basis.append(v)
+                endpoints_redundant[bidegree] = self.zigzags(bidegree=bidegree, raw=True).intersection(self.delbar_cocycles(bidegree=bidegree, raw=True)).intersection(VectorSpace(self.base(), self.dimension(bidegree)).subspace(complementary_basis))
+            endpoints = {bidegree: VectorSpace(self.base(), self.dimension(bidegree)).subspace(endpoints_redundant[bidegree]).basis() for bidegree in endpoints_redundant}
+            zigzags = []
+            for bidegree in endpoints:
+                for endpoint in endpoints[bidegree]:
+                    zigzag = self.find_zigzag(bidegree, endpoint, raw=True)
+                    # TODO: Check if there are zigzags that become linearly dependent at some point
+                    # AQUÍ CAL AFEGIR-HI ALGO! ALTRAMENT ESTÀ MALAMENT LA FUNCIÓ...
+                    zigzags.append(zigzag)
+            return zigzags
+        else:
+            zigzags_raw = self.zigzags_decomposition(raw=True)
+            return [{bidegree: self.element(bidegree, zigzag[bidegree]) for bidegree in zigzag} for zigzag in zigzags_raw]
+
+    # Find the zigzag that contains an element
+    # Caution! The resulting zigzag has the element as the top left endpoint.
+    # Hence, in general only a truncated zigzag will be obtained.
+    def find_zigzag(self, bidegree, coordinates, raw=False, previous_data={}):
+        if raw == True:
+            (p,q) = bidegree
+            if coordinates in self.dell_and_delbar_cocycles(bidegree, raw=True):
+                # It is a sink
+                if previous_data == {}:
+                    zigzag = {bidegree:coordinates}
+                else:
+                    zigzag = previous_data
+                next_source = self.__next_source(bidegree, coordinates)
+                if next_source != 0:
+                    zigzag[(p,q-1)] = next_source
+                    zigzag = self.find_zigzag((p,q-1), next_source, raw=True, previous_data=zigzag)
+            elif coordinates in self.delldelbar_cocycles(bidegree, raw=True):
+                # It is a source
+                if previous_data == {}:
+                    zigzag = {bidegree:coordinates}
+                else:
+                    zigzag = previous_data
+                next_sink = self.__next_sink(bidegree, coordinates)
+                if next_sink != 0:
+                    zigzag[(p+1,q)] = next_sink
+                    zigzag = self.find_zigzag((p+1,q), next_sink, raw=True, previous_data=zigzag)
+            return zigzag
+        if raw == False:
+            raw_zigzag = self.find_zigzag(bidegree, coordinates, raw=True, zigzag={})
+            return {bidegree: self.element(bidegree, raw_zigzag[bidegree]) for bidegree in raw_zigzag}
+
+    # Find the source following the given element (in a zigzag)
+    def __next_source(self, bidegree, element):
+        (p,q) = bidegree
+        try: return self.delbar((p,q-1)).solve_right(element)
+        except: return 0
+
+    # Find the sink following the given element (in a zigzag)
+    def __next_sink(self, bidegree, element):
+        return self.dell(bidegree)*element
 
     # Compute an inclusion of the zigzags into the bigraded component
     def zigzags_inclusion(self, bidegree):
@@ -1816,7 +1894,7 @@ class BigradedComplex():
         return zigzags_bicpx, BigradedComplexMap(zigzags_bicpx, self, inclusion), BigradedComplexMap(self, zigzags_bicpx, projection), BigradedComplexMap(self, self, homotopy, bidegree=(-1,-1))
 
     # Squares
-    def squares_basis(self, bidegree, raw=False):
+    def squares_basis(self, bidegree=None, raw=False):
         r"""
         Return a basis for the squares at the specified bidegree.
 
@@ -1840,19 +1918,27 @@ class BigradedComplex():
             sage: Iwasawa.squares_basis((2,2), raw=True)
             [(1, 0, 0, 0, 0, 0, 0, 0, 0)]
         """
-        if bidegree not in self.__squares_basis:
-            zigzags = self.zigzags(bidegree, raw=True)
-            self.__squares_basis[bidegree] = []
-            for i in range(self.dimension(bidegree)):
-                v = vector([int(i==j) for j in range(self.dimension(bidegree))])
-                if v not in zigzags:
-                    self.__squares_basis[bidegree] += [v]
-        if raw == True or self.names() == None:
-            return self.__squares_basis[bidegree]
+        if bidegree != None:
+            if bidegree not in self.__squares_basis:
+                zigzags_basis = self.zigzags_basis(bidegree, raw=True)
+                self.__squares_basis[bidegree] = []
+                for i in range(self.dimension(bidegree)):
+                    v = vector([int(i==j) for j in range(self.dimension(bidegree))])
+                    if v not in VectorSpace(self.base(), self.dimension(bidegree)).subspace(zigzags_basis + self.__squares_basis[bidegree]):
+                        self.__squares_basis[bidegree] += [v]
+            if raw == True or self.names() == None:
+                return self.__squares_basis[bidegree]
+            else:
+                return [self.element(bidegree, b) for b in self.squares_basis(bidegree, raw=True)]
         else:
-            return [self.element(bidegree, b) for b in self.squares_basis(bidegree, raw=True)]
+            for bidegree in self.bidegrees():
+                self.squares_basis(bidegree=bidegree, raw=True)
+            if raw == True:
+                return self.__squares_basis
+            else:
+                return {bidegree: [self.element(bidegree, b) for b in self.__squares_basis[bidegree]] for bidegree in self.bidegrees()}
 
-    def squares(self, bidegree, raw=False):
+    def squares(self, bidegree=None, raw=False):
         r"""
         Return a vector space of squares at the specified bidegree.
 
@@ -1878,10 +1964,37 @@ class BigradedComplex():
             Basis matrix:
             [0 0 1 0 0 0 0 0 0]
         """
-        if raw == True or self.__names == None:
-            return VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.squares_basis(bidegree, raw=True))
+        if bidegree != None:
+            if raw == True or self.__names == None:
+                return VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.squares_basis(bidegree, raw=True))
+            else:
+                return VectorSpace(self.base(), self.squares_basis(bidegree))
         else:
-            return VectorSpace(self.base(), self.squares_basis(bidegree))
+            return {bidegree: self.squares(bidegree=bidegree, raw=raw) for bidegree in self.bidegrees()}
+
+    # Squares decomposition of the bigraded complex
+    # Squares contain: vertex, dell(vertex), delbar(vertex), dell delabr(vertex)
+    def squares_decomposition(self, raw=False):
+        if raw == True:
+            squares = self.squares_basis(raw=True)
+            decomposition = []
+            computed_squares = {bidegree: [] for bidegree in squares}
+            zigzags = self.zigzags_basis(raw=True)
+            for (p,q) in squares:
+                for vertex in squares[(p,q)]:
+                    if self.delldelbar((p,q))*vertex != 0 and vertex not in VectorSpace(self.base(), self.dimension((p,q))).subspace(zigzags[(p,q)] + computed_squares[(p,q)]):
+                        dell = self.dell((p,q))*vertex
+                        delbar = self.delbar((p,q))*vertex
+                        delldelbar = self.delldelbar((p,q))*vertex
+                        square = {(p,q): vertex, (p+1,q): dell, (p,q+1): delbar, (p+1,q+1): delldelbar}
+                        computed_squares[(p,q)].append(vertex)
+                        computed_squares[(p+1,q)].append(dell)
+                        computed_squares[(p,q+1)].append(delbar)
+                        computed_squares[(p+1,q+1)].append(delldelbar)
+                        decomposition.append(square)
+            return decomposition                    
+        else:
+            return [{bidegree: self.element(bidegree, square[bidegree]) for bidegree in square} for square in self.squares_decomposition(raw=True)]
 
 ############# Ascii art ################
 
