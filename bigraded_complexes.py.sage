@@ -72,6 +72,18 @@ class BigradedComplex():
             else:
                 self.__delldelbar[(p,q)] = self.__dell[(p,q+1)] * self.__delbar[(p,q)]
 
+        self.__total_degrees = []
+        self.__ordered_bidegrees = {}
+        for (p,q) in self.bidegrees():
+            if p+q not in self.__total_degrees:
+                self.__total_degrees.append(p+q)
+                self.__ordered_bidegrees[p+q] = [p]
+            else:
+                self.__ordered_bidegrees[p+q].append(p)
+        self.__total_degrees = sorted(self.__total_degrees)
+        for deg in self.__total_degrees:
+            self.__ordered_bidegrees[deg] = [(p,deg-p) for p in sorted(self.__ordered_bidegrees[deg])]
+
     def base(self):
         r"""
         Return the coefficient field of the `DoubleComplex`.
@@ -316,6 +328,15 @@ class BigradedComplex():
             raise TypeError("The length of the provided coordinates does not coincide with the dimension of the bigraded component at bidegree " + str(bidegree))
         else:
             return sum(c * b for (c, b) in zip(coordinates, self.names(bidegree)))
+
+def total_degrees(self):
+        return self.__total_degrees
+
+    def ordered_bidegrees(self, total_degree=None):
+        if total_degree == None:
+            return self.__ordered_bidegrees
+        else:
+            return self.__ordered_bidegrees[total_degree]
 
 ################ Dell #################
     def dell_cocycles(self, bidegree, raw=False):
@@ -1202,7 +1223,7 @@ class BigradedComplex():
                 self.__delbar_cohomology[bidegree] = self.delbar_cocycles(bidegree, raw=True)/self.delbar_coboundaries(bidegree, raw=True)
             return self.__delbar_cohomology[bidegree]
         else:
-            return VectorSpace(self.base(), self.dell_cohomology_basis(bidegree))
+            return VectorSpace(self.base(), self.delbar_cohomology_basis(bidegree))
 
     def delbar_cohomology_raw(self, bidegree):
         r"""
@@ -1996,6 +2017,126 @@ class BigradedComplex():
         else:
             return [{bidegree: self.element(bidegree, square[bidegree]) for bidegree in square} for square in self.squares_decomposition(raw=True)]
 
+############# Frölicher spectral sequence #############
+
+    def total_degree_to_bidegree(self, total_degree, element):
+        result = {}
+        index = 0
+        for bidegree in self.ordered_bidegrees(total_degree):
+            result[bidegree] = vector(element[index : index + self.dimension(bidegree)])
+            index = index + self.dimension(bidegree)
+        return result
+
+    def bidegree_to_total_degree(self, element):
+        if element == {}:
+            return 0
+        else:
+            (p,q) = list(element.keys())[0]
+            total_degree = p+q
+            total_element = []
+            for bidegree in self.ordered_bidegrees(total_degree):
+                if bidegree in element:
+                    total_element = total_element + list(element[bidegree])
+                else:
+                    total_element = total_element + [0]*self.dimension(bidegree)
+            return vector(total_element)
+
+    def total_dimension(self, total_degree=None):
+        if total_degree != None:
+            return sum(self.dimension(bidegree) for bidegree in self.ordered_bidegrees(total_degree))
+        else:
+            return {total_degree: self.total_dimension(total_degree=total_degree) for total_degree in self.total_degrees()}
+
+    def total_dell(self, total_degree):
+        matrix = []
+        for (p,q) in self.ordered_bidegrees(total_degree):
+            for column in self.dell((p,q)).columns():
+                matrix.append(self.bidegree_to_total_degree({(p+1,q): column}))
+        return Matrix(self.base(), matrix).transpose()
+
+    def total_delbar(self, total_degree):
+        matrix = []
+        for (p,q) in self.ordered_bidegrees(total_degree):
+            for column in self.delbar((p,q)).columns():
+                matrix.append(self.bidegree_to_total_degree({(p,q+1): column}))
+        return Matrix(self.base(), matrix).transpose()
+
+    def total_differential(self, total_degree):
+        if total_degree in self.total_degrees():
+            if total_degree+1 in self.total_degrees():
+                return (self.total_dell(total_degree) + self.total_delbar(total_degree))
+            else:
+                return Matrix(self.base(), 0, self.total_dimension(total_degree))
+        else:
+            if total_degree+1 in self.total_degrees():
+                return Matrix(self.base(), self.total_dimension(total_degree+1), 0)
+            else:
+                return Matrix(self.base(), 0)
+        
+
+    def total_coboundaries(self, total_degree):
+        if total_degree not in self.total_degrees():
+            return VectorSpace(self.base(), 0)
+        elif total_degree-1 not in self.total_degrees():
+            return VectorSpace(self.base(), self.total_dimension(total_degree)).subspace([])
+        else:
+            return VectorSpace(self.base(), self.total_dimension(total_degree)).subspace(self.total_differential(total_degree-1).columns())
+
+    def total_cocycles(self, total_degree):
+        if total_degree not in self.total_degrees():
+            return VectorSpace(self.base(), 0)
+        else:
+            return self.total_differential(total_degree).right_kernel()
+
+    def horizontal_filtration(self, stage, total_degree):
+        if total_degree not in self.total_degrees():
+            return VectorSpace(self.base(), 0)
+        else:
+            basis = []
+            for (p,q) in self.ordered_bidegrees(total_degree):
+                if p >= stage:
+                    for i in range(self.dimension((p,q))):
+                        v = vector([int(i==j) for j in range(self.dimension((p,q)))])
+                        basis.append(self.bidegree_to_total_degree({(p,q): v}))
+            return VectorSpace(self.base(), self.total_dimension(total_degree)).subspace(basis)
+
+    def spectral_sequence_cocycles(self, r, p, total_degree):
+        if total_degree in self.total_degrees():
+            if total_degree+1 not in self.total_degrees():
+                return self.horizontal_filtration(p, total_degree)
+            else:
+                intersection = VectorSpace(self.base(), self.total_dimension(total_degree+1)).subspace([self.total_differential(total_degree)*v for v in self.horizontal_filtration(p, total_degree).basis()]).intersection(self.horizontal_filtration(p+r, total_degree+1))
+                return self.total_cocycles(total_degree).intersection(self.horizontal_filtration(p, total_degree)) + VectorSpace(self.base(), self.total_dimension(total_degree)).subspace(self.total_differential(total_degree).solve_right(v) for v in intersection.basis())
+        else:
+            return VectorSpace(self.base(), 0)
+
+    def spectral_sequence_coboundaries(self, r, p, total_degree):
+        if total_degree in self.total_degrees():
+            return self.horizontal_filtration(p, total_degree).intersection(VectorSpace(self.base(), self.total_dimension(total_degree)).subspace([self.total_differential(total_degree-1)*v for v in self.horizontal_filtration(p-r, total_degree-1).basis()]))
+        else:
+            return VectorSpace(self.base(), 0)
+
+    def spectral_sequence_basis(self, r, p, q, raw=False):
+        if raw == True or self.names() == None:
+            return (self.spectral_sequence_cocycles(r, p, p+q)/(self.spectral_sequence_cocycles(r-1,p+1,p+q)+self.spectral_sequence_coboundaries(r-1,p,p+q))).basis()
+        else:
+            spectral_sequence_raw = self.spectral_sequence(r, p, q, raw=True)
+            lifted_basis = [self.total_degree_to_bidegree(p+q, spectral_sequence_raw.lift(b)) for b in spectral_sequence_raw.basis()]
+            basis = []
+            for b in lifted_basis:
+                element = ""
+                for bidegree in b:
+                    if b[bidegree] != 0:
+                        element = element + str(self.element(bidegree, b[bidegree])) + " + "
+                basis.append('[{}]'.format(element[:-3]))
+            return basis
+
+    def spectral_sequence(self, r, p, q, raw=False):
+        if raw == True or self.names() == None:
+            return self.spectral_sequence_cocycles(r, p, p+q)/(self.spectral_sequence_cocycles(r-1,p+1,p+q)+self.spectral_sequence_coboundaries(r-1,p,p+q))
+        else:
+            return VectorSpace(self.base(), self.spectral_sequence_basis(r,p,q,raw=False))
+
 ############# Ascii art ################
 
     # Method used to produce the asii art tables for the cohomologies
@@ -2138,6 +2279,9 @@ class BigradedComplex():
     def _ascii_art_squares(self, n_generators_row = -1):
         print("Squares:\n")
         self.__ascii_art_table({bidegree: self.squares_basis(bidegree) for bidegree in self.bidegrees()}, n_generators_row)
+
+    def _ascii_art_spectral_sequence(self, r, n_generators_row=-1):
+        self.__ascii_art_table({bidegree: self.spectral_sequence_basis(r, bidegree[0], bidegree[1]) for bidegree in self.bidegrees()}, n_generators_row=n_generators_row)
 
 # BigradedComplexMap
 class BigradedComplexMap():
