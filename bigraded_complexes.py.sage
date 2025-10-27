@@ -2966,7 +2966,7 @@ class BigradedComplexMap():
 
 # BigradedSubcomplex
 class BigradedSubcomplex(BigradedComplex):
-    def __init__(self, basis, parent):
+    def __init__(self, basis, parent, CHECK=False):
         self.__parent = parent
 
         new_basis = {bidegree: [] for bidegree in basis}
@@ -3010,7 +3010,7 @@ class BigradedSubcomplex(BigradedComplex):
         else:
             names = None
 
-        BigradedComplex.__init__(self, self.__parent.base(), dell, delbar, names=names)
+        BigradedComplex.__init__(self, self.__parent.base(), dell, delbar, names=names, CHECK=CHECK)
 
         inclusion_matrix = {bidegree: Matrix(self.__parent.base(), [x for x in self.__subspace[bidegree].basis()]).transpose() for bidegree in self.__subspace}
         self.__inclusion = BigradedComplexMap(self, self.__parent, inclusion_matrix)
