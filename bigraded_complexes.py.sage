@@ -1,6 +1,184 @@
+from sage.geometry.hyperplane_arrangement.affine_subspace import AffineSubspace
+
+# Auxiliary class used in the computation of the zigzags decomposition
+#   ambient_space: ambient vector space where everything happens
+#   outer_subspace: affine subspace of the ambient space. Points of the _PuncturedAffineSpace will be taken from this subspace
+#   inner_subspaces: list of affine subspaces of the ambient space. These subspaces will be omitted when taking a point of the _PuncturedAffineSpace
+class PuncturedAffineSpace():
+    def __init__(self, ambient_space, outer_subspace, inner_subspaces):
+        self.__ambient_space = ambient_space
+        self.__ambient_dimension = ambient_space.rank()
+        self.__outer_subspace = outer_subspace
+        self.__inner_subspaces = []
+        self.__inner_points = []
+        self.__base = ambient_space.base()
+        self.__is_empty = False
+        try:
+            self.__outer_point = outer_subspace.point()
+        except:
+            self.__outer_point = None
+            self.__is_empty = True
+
+        if self.__is_empty == False:
+            for inner in inner_subspaces:
+                intersection = inner.intersection(self.__outer_subspace)
+                try:
+                    p = intersection.point()
+                    if intersection not in self.__inner_subspaces:
+                        self.__inner_subspaces.append(intersection)
+                        self.__inner_points.append(p)
+                    if intersection == self.__outer_subspace:
+                        self.__is_empty = True
+                except:
+                    pass
+
+    @staticmethod
+    def unpunctured(ambient_space, outer_subspace):
+        return PuncturedAffineSpace(ambient_space, outer_subspace, [])
+
+    @staticmethod
+    def unpunctured_from_vector_space(ambient_space, outer_subspace):
+        return PuncturedAffineSpace.unpunctured(ambient_space, AffineSubspace(vector([0]*ambient_space.rank()), outer_subspace))
+
+    @staticmethod
+    def empty(ambient_space):
+        return PuncturedAffineSpace.unpunctured(ambient_space, None)
+
+    @staticmethod
+    def total(ambient_space):
+        return PuncturedAffineSpace.unpunctured_from_vector_space(ambient_space, ambient_space)
+
+    @staticmethod
+    def zero(base, dimension):
+        vector_space = VectorSpace(base, dimension)
+        subspace = AffineSubspace(vector_space.zero(), vector_space.subspace([]))
+        return PuncturedAffineSpace.unpunctured_from_vector_space(vector_space, subspace)
+
+    @staticmethod
+    def kernel(matrix):
+        return PuncturedAffineSpace.unpunctured_from_vector_space(VectorSpace(matrix.base(), matrix.ncols()), matrix.right_kernel())
+
+    def ambient_space(self):
+        return self.__ambient_space
+
+    def outer_subspace(self):
+        return self.__outer_subspace
+
+    def inner_subspaces(self):
+        return self.__inner_subspaces
+
+    def base(self):
+        return self.__base
+
+    def is_empty(self):
+        return self.__is_empty
+
+    def intersection(self, other):
+        if self.is_empty() or other.is_empty():
+            return PuncturedAffineSpace.empty(self.ambient_space())
+        else:
+            outer = self.outer_subspace().intersection(other.outer_subspace())
+            return PuncturedAffineSpace(self.ambient_space(), outer, self.inner_subspaces() + other.inner_subspaces())
+
+    def remove_subspace(self, remove):
+        return PuncturedAffineSpace(self.ambient_space(), self.outer_subspace(), self.inner_subspaces() + [remove])
+
+    def preimage(self, matrix):
+        ambient = VectorSpace(self.base(), matrix.ncols())
+        image_matrix = PuncturedAffineSpace.unpunctured_from_vector_space(self.ambient_space(), VectorSpace(self.base(), self.__ambient_dimension).subspace(matrix.columns()))
+        intersection = self.intersection(image_matrix)
+        if self.is_empty():
+            return PuncturedAffineSpace.empty(ambient)
+        else:
+            try:
+                x = matrix.solve_right(intersection.get_point())
+                outer = AffineSubspace(x, matrix.right_kernel() + ambient.subspace([matrix.solve_right(v) for v in intersection.outer_subspace().linear_part().basis()]))
+                inners = []
+                for inner in intersection.inner_subspaces():
+                    try:
+                        y = matrix.solve_right(self.__inner_points[intersection.inner_subspaces().index(inner)])
+                        inners.append(AffineSubspace(y, matrix.right_kernel() + ambient.subspace([matrix.solve_right(v) for v in inner.linear_part().basis()])))
+                    except:
+                        pass
+                return PuncturedAffineSpace(ambient, outer, inners)
+            except:
+                return PuncturedAffineSpace.empty(ambient)
+
+    def image(self, matrix):
+        ambient = VectorSpace(self.base(), matrix.nrows())
+        if self.is_empty():
+            return PuncturedAffineSpace.empty(ambient)
+        else:
+            try:
+                x = matrix*self.__outer_point
+                outer = AffineSubspace(x, ambient.subspace([matrix*v for v in self.outer_subspace().linear_part().basis()]))
+                inners = []
+                for inner in self.inner_subspaces():
+                    y = matrix*self.__inner_points[self.inner_subspaces().index(inner)]
+                    inners.append(AffineSubspace(y, ambient.subspace([matrix*v for v in inner.linear_part().basis()])))
+                return PuncturedAffineSpace(ambient, outer, inners)
+            except:
+                return PuncturedAffineSpace.empty(ambient)
+
+    def get_point(self):
+        if self.is_empty():
+            return None
+        elif self.outer_subspace().dimension() == 0:
+            return self.__outer_point
+        elif self.ambient_space().rank() != self.outer_subspace().linear_part().rank():
+            inclusion = Matrix(self.base(), [v for v in self.outer_subspace().linear_part().basis()]).transpose()
+            rank = self.outer_subspace().linear_part().rank()
+            new_ambient = VectorSpace(self.base(), rank)
+            new_outer = AffineSubspace(vector([0]*rank), VectorSpace(self.base(), rank))
+            new_inners = []
+            for inner in self.inner_subspaces():
+                subspace = new_ambient.subspace([self.outer_subspace().linear_part().coordinates(v) for v in inner.linear_part().basis()])
+                new_inners.append(AffineSubspace(self.outer_subspace().linear_part().coordinates(inner.point() - self.__outer_point), subspace))
+            point = PuncturedAffineSpace(new_ambient, new_outer, new_inners).get_point()
+            if point == None:
+                return None
+            else:
+                return inclusion*point  + self.__outer_point
+        else:
+            n_varieties = len(self.inner_subspaces())
+            dimension = self.ambient_space().rank()
+            if dimension >= 2:
+                vectors = [vector([int(i==j) for j in range(dimension)]) for i in range(dimension-2)]
+                for n in range(n_varieties+1):
+                    v = vector([int(i==dimension-2) for i in range(dimension)])
+                    v[dimension-1] = n
+                    hyperplane = AffineSubspace(vector([0]*dimension), VectorSpace(self.base(), dimension).subspace(vectors + [v]))
+                    works = True
+                    for inner in self.inner_subspaces():
+                        if inner == hyperplane:
+                            works = False
+                            break
+
+                    if works == True:
+                        new_inners = []
+                        for inner in self.inner_subspaces():
+                            try:
+                                intersection = hyperplane.intersection(inner)
+                                a = intersection.point()
+                                new_inners.append(intersection)
+                            except:
+                                pass
+                        point = PuncturedAffineSpace(self.ambient_space(), hyperplane, new_inners).get_point()
+                        return point
+            elif dimension == 1:
+                for inner in self.inner_subspaces():
+                    point = inner.point() + vector([1])
+                    works = True
+                    for inner2 in self.inner_subspaces():
+                        if point in inner2:
+                            works = False
+                    if works == True:
+                        return point
+                return self.ambient_space().zero()
+
 # Bigraded complex
 class BigradedComplex():
-    def __init__(self, base, dell, delbar, names=None, latex_names=None, CHECK=False):
+    def __init__(self, base, dell, delbar, names=None, latex_names=None, CHECK=True):
         self.__base = base
         self.__dimension = {}
         self.__bidegrees = []
@@ -9,6 +187,7 @@ class BigradedComplex():
         self.__delldelbar = {}
         self.__names = names
         self.__latex_names = latex_names
+        self.__CHECK = CHECK
 
         self.__dell_cocycles = {}
         self.__dell_coboundaries = {}
@@ -24,18 +203,47 @@ class BigradedComplex():
         self.__bottchern_cohomology = {}
         self.__reduced_bottchern_cohomology = {}
         self.__reduced_aeppli_cohomology = {}
-        self.__zigzags_basis = {}
         self.__squares_basis = {}
-
-        #TODO: Check if the provided bigraded complex is well-defined (i.e. if dell, delbar form a bidifferential) (in case CHECK == True)
+        self.__zigzags_decomposition = None
 
         # Record the dimensions of the bigraded components
         for (p,q) in self.__dell:
-            if ((p,q) in self.__dimension) == False:
+            if (p,q) not in self.__dimension:
                 self.__dimension[(p,q)] = self.__dell[(p,q)].ncols()
         for (p,q) in self.__delbar:
-            if ((p,q) in self.__dimension) == False:
+            if (p,q) not in self.__dimension:
                 self.__dimension[(p,q)] = self.__delbar[(p,q)].ncols()
+
+        for (p,q) in self.__dimension:
+            if (p,q) not in self.__dell:
+                if (p+1,q) not in self.__dimension:
+                    self.__dell[(p,q)] = Matrix(self.base(), 0, self.__dimension[(p,q)])
+                else:
+                    self.__dell[(p,q)] = Matrix(self.base(), self.__dimension[(p+1,q)], self.__dimension[(p,q)])
+            if (p,q) not in self.__delbar:
+                if (p,q+1) not in self.__dimension:
+                    self.__delbar[(p,q)] = Matrix(self.base(), 0, self.__dimension[(p,q)])
+                else:
+                    self.__delbar[(p,q)] = Matrix(self.base(), self.__dimension[(p,q+1)], self.__dimension[(p,q)])
+
+        #Check if the provided bigraded complex is well-defined (i.e. if dell, delbar form a bidifferential) (in case CHECK == True)
+        if self.__CHECK:
+            for (p,q) in self.bidegrees():
+                if (p+1,q) in self.bidegrees() and (p+2,q) in self.bidegrees():
+                    if self.dell((p+1,q))*self.dell((p,q)) != 0:
+                        return BaseException("The dell differential does not square to zero")
+                if (p,q+1) in self.bidegrees() and (p,q+2) in self.bidegrees():
+                    if self.delbar((p,q+1))*self.delbar((p,q)) != 0:
+                        return BaseException("The delbar differential does not square to zero")
+                if (p,q+1) in self.bidegrees() and (p+1,q) in self.bidegrees() and (p+1,q+1) in self.bidegrees():
+                    if self.delbar((p+1,q))*self.dell((p,q)) + self.dell((p,q+1))*self.delbar((p,q)) != 0:
+                        return BaseException("The differentials dell and delbar do not anticommute")
+                if self.dell((p,q)).ncols() != self.delbar((p,q)).ncols():
+                    return BaseException("The differentials dell and delbar are not well defined")
+                if (p-1,q) in self.bidegrees() and self.dell((p-1,q)).nrows() != self.dell((p,q)).ncols():
+                    return BaseException("The differentials dell and delbar are not well defined")
+                if (p,q-1) in self.bidegrees() and self.delbar((p,q-1)).nrows() != self.dell((p,q)).ncols():
+                    return BaseException("The differentials dell and delbar are not well defined")
 
         min_p = None
         max_p = None
@@ -70,7 +278,10 @@ class BigradedComplex():
             elif (p,q+1) not in self.__dimension:
                 self.__delldelbar[(p,q)] = Matrix(self.__base, self.__dimension[(p+1,q+1)], self.__dimension[(p,q)])
             else:
-                self.__delldelbar[(p,q)] = self.__dell[(p,q+1)] * self.__delbar[(p,q)]
+                if (p,q) in self.__delbar and (p,q+1) in self.__dell and self.__delbar[(p,q)] != Matrix(self.base(), []) and self.__dell[(p,q+1)] != Matrix(self.base(), []):
+                    self.__delldelbar[(p,q)] = self.__dell[(p,q+1)] * self.__delbar[(p,q)]
+                else:
+                    self.__delldelbar[(p,q)] = Matrix(self.base(), self.__dimension[(p+1,q+1)], self.__dimension[(p,q)])
 
         self.__total_degrees = []
         self.__ordered_bidegrees = {}
@@ -270,7 +481,7 @@ class BigradedComplex():
              (3, 2),
              (3, 3)]
         """
-        return self.__dimension.keys()
+        return list(self.__dimension.keys())
 
     def zigzags_dimension(self, bidegree=None):
         if bidegree == None:
@@ -327,9 +538,51 @@ class BigradedComplex():
         elif len(coordinates) != self.dimension(bidegree):
             raise TypeError("The length of the provided coordinates does not coincide with the dimension of the bigraded component at bidegree " + str(bidegree))
         else:
-            return sum(c * b for (c, b) in zip(coordinates, self.names(bidegree)))
+            first = True
+            result = ""
+            for i in range(len(coordinates)):
+                if coordinates[i] == 1:
+                    if first:
+                        result = str(self.names(bidegree)[i])
+                        first = False
+                    else:
+                        result = result + " + " + str(self.names(bidegree)[i])
+                elif coordinates[i] == -1:
+                    if first:
+                        result = "-" + str(self.names(bidegree)[i])
+                        first = False
+                    else:
+                        result = result + " - " + str(self.names(bidegree)[i])
+                elif coordinates[i] < 0:
+                    if first:
+                        result = str(coordinates[i]) + "*" + str(self.names(bidegree)[i])
+                        first = False
+                    else:
+                        result = result + " - " + str(-coordinates[i]) + "*" + str(self.names(bidegree)[i])
+                elif coordinates[i] > 0:
+                    if first:
+                        result = str(coordinates[i]) + "*" + str(self.names(bidegree)[i])
+                        first = False
+                    else:
+                        result = result + " + " + str(coordinates[i]) + "*" + str(self.names(bidegree)[i])
+            if result == "":
+                result = "0"
+            return result
+            #return sum(c * b for (c, b) in zip(coordinates, self.names(bidegree)))
 
-def total_degrees(self):
+    # Return the subcomplex together with the inclusion map
+    def subcomplex(self, subspace):
+        valid_bidegrees = []
+        for bidegree in subspace:
+            if subspace[bidegree] != []:
+                valid_bidegrees.append(bidegree)
+        return BigradedSubcomplex({bidegree: subspace[bidegree] for bidegree in valid_bidegrees}, self, CHECK=False)
+
+    # Return the minimal subcomplex containing the specified bidegrees
+    def subcomplex_bidegrees(self, bidegrees):
+        return BigradedSubcomplex({bidegree: [vector([int(i==j) for j in range(self.dimension(bidegree))]) for i in range(self.dimension(bidegree))] for bidegree in bidegrees}, self, CHECK=False)
+
+    def total_degrees(self):
         return self.__total_degrees
 
     def ordered_bidegrees(self, total_degree=None):
@@ -337,6 +590,152 @@ def total_degrees(self):
             return self.__ordered_bidegrees
         else:
             return self.__ordered_bidegrees[total_degree]
+
+    # Attach an element to the bigraded complex
+    def attach_element(self, bidegree, dell, delbar, name=None):
+        dell = vector(dell)
+        delbar = vector(delbar)
+        (p,q) = bidegree
+        if (p+1,q) in self.bidegrees() and self.dell((p+1,q))*dell != 0:
+            raise BaseException("The element can not be attached: dell would not square to zero.")
+        elif (p,q+1) in self.bidegrees() and self.delbar((p,q+1))*delbar != 0:
+            raise BaseException("The element can not be attached: delbar would not square to zero.")
+
+        if (p+1,q) in self.bidegrees() and (p,q+1) in self.bidegrees():
+            if self.delbar((p+1,q))*dell + self.dell((p,q+1))*delbar != 0:
+                raise BaseException("The element can not be attached: dell and delbar would not anticommute.")
+        elif (p+1,q) in self.bidegrees():
+            if self.delbar((p+1,q))*dell != 0:
+                raise BaseException("The element can not be attached: dell and delbar would not anticommute.")
+        elif (p,q+1) in self.bidegrees():
+            if self.dell((p,q+1))*delbar != 0:
+                raise BaseException("The element can not be attached: dell and delbar would not anticommute.")
+
+        new_dell = {bideg: self.dell(bideg) for bideg in self.bidegrees()}
+        new_delbar = {bideg: self.delbar(bideg) for bideg in self.bidegrees()}
+        if bidegree not in self.bidegrees():
+            if (p+1,q) in self.bidegrees():
+                new_dell[(p,q)] = Matrix(self.base(), [dell]).transpose()
+            else:
+                new_dell[(p,q)] = Matrix(self.base(), 0, 1)
+            if (p,q+1) in self.bidegrees():
+                new_delbar[(p,q)] = Matrix(self.base(), [delbar]).transpose()
+            else:
+                new_delbar[(p,q)] = Matrix(self.base(), 0, 1)
+        else:
+            if (p+1,q) not in self.bidegrees():
+                new_dell[(p,q)] = Matrix(self.base(), 0, self.dimension((p,q))+1)
+            else:
+                values = new_dell[(p,q)].rows()
+                for i in range(len(dell)):
+                    values[i] = list(values[i]) + [dell[i]]
+                new_dell[(p,q)] = Matrix(self.base(), values)
+
+            if (p,q+1) not in self.bidegrees():
+                new_delbar[(p,q)] = Matrix(self.base(), 0, self.dimension((p,q))+1)
+            else:
+                values = new_delbar[(p,q)].rows()
+                for i in range(len(delbar)):
+                    values[i] = list(values[i]) + [delbar[i]]
+                new_delbar[(p,q)] = Matrix(self.base(), values)
+
+        if (p-1,q) in self.bidegrees():
+            values = new_dell[(p-1,q)].columns()
+            if values == []:
+                values = [[0]]
+            else:
+                for i in range(len(values)):
+                    values[i] = list(values[i]) + [0]
+            new_dell[(p-1,q)] = Matrix(self.base(), values).transpose()
+
+        if (p,q-1) in self.bidegrees():
+            values = new_delbar[(p,q-1)].columns()
+            if values == []:
+                values = [[0]]
+            else:
+                for i in range(len(values)):
+                    values[i] = list(values[i]) + [0]
+            new_delbar[(p,q-1)] = Matrix(self.base(), values).transpose()
+
+        if self.names() != None and name != None:
+            new_names = self.names()
+            if (p,q) in self.bidegrees():
+                new_names[(p,q)].append(name)
+            else:
+                new_names[(p,q)] = [name]
+        else:
+            new_names = None
+
+        return BigradedComplex(self.base(), new_dell, new_delbar, names=new_names)
+
+    def attach_random_element(self, min_degree=None, max_degree=None, min_coefficient=-5, max_coefficient=5, name=None):
+        def random_element_from_vector_space(V):
+            element = V.zero()
+            for v in V.basis():
+                coefficient = int(random()*(max_coefficient-min_coefficient)) + min_coefficient
+                element += coefficient*v
+            return element
+
+        if min_degree == None or max_degree == None:
+            valid_bidegree = False
+            while valid_bidegree == False:
+                (p,q) = self.bidegrees()[int(random()*len(self.bidegrees()))]
+                if min_degree != None and (p < min_degree or q < min_degree):
+                    valid_bidegree = False
+                elif max_degree != None and (p > max_degree or q > max_degree):
+                    valid_bidegree = False
+                else:
+                    valid_bidegree = True
+        else:
+            p = int(random()*(max_degree-min_degree))+min_degree
+            q = int(random()*(max_degree-min_degree))+min_degree
+
+        if (p+1,q) in self.bidegrees() and (p,q+1) in self.bidegrees() and (p+1,q+1) in self.bidegrees():
+            dell_of_delbar_cocycles = VectorSpace(self.base(), self.dimension((p+1,q+1))).subspace([self.dell((p,q+1))*v for v in self.delbar_cocycles_raw((p,q+1)).basis()])
+            delbar_of_dell_cocycles = VectorSpace(self.base(), self.dimension((p+1,q+1))).subspace([self.delbar((p+1,q))*v for v in self.dell_cocycles_raw((p+1,q)).basis()])
+            subspace_dell_delbar = dell_of_delbar_cocycles.intersection(delbar_of_dell_cocycles)
+            delldelbar = random_element_from_vector_space(subspace_dell_delbar)
+            lift_dell = self.delbar((p+1,q)).solve_right(delldelbar)
+            lift_delbar = self.dell((p,q+1)).solve_right(-delldelbar)
+            subspace_dell = AffineSubspace(lift_dell, self.delbar_cocycles_raw((p+1,q))).intersection(AffineSubspace(vector([0]*self.dimension((p+1,q))), self.dell_cocycles_raw((p+1,q))))
+            subspace_delbar = AffineSubspace(lift_delbar, self.dell_cocycles_raw((p,q+1))).intersection(AffineSubspace(vector([0]*self.dimension((p,q+1))), self.delbar_cocycles_raw((p,q+1))))
+            dell = subspace_dell.point() + random_element_from_vector_space(subspace_dell.linear_part())
+            delbar = subspace_delbar.point() + random_element_from_vector_space(subspace_delbar.linear_part())
+            return self.attach_element((p,q), dell, delbar, name=name)
+        elif (p+1,q) in self.bidegrees() and (p,q+1) in self.bidegrees():
+            dell = random_element_from_vector_space(self.dell_cocycles_raw((p+1,q)))
+            delbar = random_element_from_vector_space(self.delbar_cocycles_raw((p,q+1)))
+            return self.attach_element((p,q), dell, delbar, name=name)
+        elif (p+1,q) in self.bidegrees():
+            if (p+1,q+1) not in self.bidegrees():
+                dell = random_element_from_vector_space(self.dell_cocycles_raw((p+1,q)))
+            else:
+                dell = random_element_from_vector_space(self.dell_cocycles_raw((p+1,q)).intersection(self.delbar_cocycles_raw((p+1,q))))
+            return self.attach_element((p,q), dell, vector([]), name=name)
+        elif (p,q+1) in self.bidegrees():
+            if (p+1,q+1) not in self.bidegrees():
+                delbar = random_element_from_vector_space(self.delbar_cocycles_raw((p,q+1)))
+            else:
+                delbar = random_element_from_vector_space(self.dell_cocycles_raw((p,q+1)).intersection(self.delbar_cocycles_raw((p,q+1))))
+            return self.attach_element((p,q), vector([]), delbar, name=name)
+        else:
+            return self.attach_element((p,q), vector([]), vector([]), name=name)
+
+    @staticmethod
+    def zero(base):
+        return BigradedComplex(base, {}, {})
+
+    @staticmethod
+    def random(base, min_degree=0, max_degree=3, min_coefficient=-5, max_coefficient=5, n_generators=60, names=None):
+        if names == None:
+            names = ["x" + str(i+1) for i in range(n_generators)]
+
+        partial_bicos = [BigradedComplex.zero(base)]
+
+        for i in range(n_generators):
+            partial_bicos.append(partial_bicos[-1].attach_random_element(min_degree=min_degree, max_degree=max_degree, min_coefficient=min_coefficient, max_coefficient=max_coefficient, name=names[i]))
+
+        return partial_bicos[-1]
 
 ################ Dell #################
     def dell_cocycles(self, bidegree, raw=False):
@@ -498,7 +897,7 @@ def total_degrees(self):
                 if (p-1,q) not in self.bidegrees():
                     self.__dell_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace([0])
                 else:
-                    self.__dell_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.dell((p-1,q)).transpose(), self.base())
+                    self.__dell_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.dell((p-1,q)).transpose())
             return self.__dell_coboundaries[bidegree]
         else:
             return VectorSpace(self.base(), [self.element(bidegree, b) for b in self.dell_coboundaries(bidegree, raw=True).basis()])
@@ -681,7 +1080,7 @@ def total_degrees(self):
                 if (p,q-1) not in self.bidegrees():
                     self.__delbar_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace([0])
                 else:
-                    self.__delbar_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.delbar((p,q-1)).transpose(), self.base())
+                    self.__delbar_coboundaries[bidegree] = VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.delbar((p,q-1)).transpose())
             return self.__delbar_coboundaries[bidegree]
         else:
             return VectorSpace(self.base(), [self.element(bidegree, b) for b in self.delbar_coboundaries(bidegree, raw=True).basis()])
@@ -846,7 +1245,7 @@ def total_degrees(self):
             projection = Matrix(self.base(), n, self.dimension(bidegree))
             for i in range(n):
                 projection[i,i] = 1
-            return projection * change_basis
+            return proje35ction * change_basis
 
     def delldelbar_coboundaries(self, bidegree, raw=False):
         r"""
@@ -1687,166 +2086,292 @@ def total_degrees(self):
         """
         return self.reduced_aeppli_cohomology(bidegree, raw=True)
 
-############ Zig-zags and squares ###############
+############ Zigzags ###############
 
-    # Zigzags
-    def zigzags_basis(self, bidegree=None, raw=False):
-        r"""
-        Return a basis for the zigzags at the specified bidegree.
-
-        INPUT:
-
-        - ``bidegree`` -- tuple of two integers
-
-        - ``raw`` -- boolean (default: ``False``)
-
-        OUTPUT:
-
-        - Basis for the zigzgas of bidegree ``bidegree``.
-        If ``raw`` is set to ``True`` (or the bigraded complex has unspecified
-        names), the basis is made of coordinate vectors. Otherwise, the basis
-        depends on the names of the bigraded complex.
-
-        EXAMPLES:
-            
-            sage: Iwasawa = BidifferentialBigradedCommutativeAlgebraExample.Iwasawa()
-            sage: Iwasawa.zigzags_basis((2,2))
-            [a*c*abar*bbar,
-             b*c*abar*bbar,
-             a*b*abar*cbar,
-             a*c*abar*cbar,
-             b*c*abar*cbar,
-             a*b*bbar*cbar,
-             a*c*bbar*cbar,
-             b*c*bbar*cbar]
-            sage: Iwasawa.zigzags_basis((1,1), raw=True)
-            [(0, 0, 1, 0, 0, 0, 0, 0, 0),
-             (0, 0, 0, 0, 0, 1, 0, 0, 0),
-             (0, 0, 0, 0, 0, 0, 1, 0, 0),
-             (0, 0, 0, 0, 0, 0, 0, 1, 0),
-             (1, 0, 0, 0, 0, 0, 0, 0, 0),
-             (0, 1, 0, 0, 0, 0, 0, 0, 0),
-             (0, 0, 0, 1, 0, 0, 0, 0, 0),
-             (0, 0, 0, 0, 1, 0, 0, 0, 0)]
-        """
-        if bidegree != None:
-            if bidegree not in self.__zigzags_basis:
-                reduced_aeppli = self.reduced_aeppli_cohomology_raw(bidegree)
-                bottchern = self.bottchern_cohomology_raw(bidegree)
-                self.__zigzags_basis[bidegree] = [reduced_aeppli.lift(b) for b in reduced_aeppli.basis()] + [bottchern.lift(b) for b in bottchern.basis()]
-            if raw == True or self.names() == None:
-                return self.__zigzags_basis[bidegree]
+    def __find_zigzag(self, already_computed={}):
+        already_computed_subspaces = {}
+        for bidegree in self.bidegrees():
+            if bidegree in already_computed:
+                already_computed_subspaces[bidegree] = AffineSubspace(vector([0]*self.dimension(bidegree)), VectorSpace(self.base(), self.dimension(bidegree)).subspace(already_computed[bidegree]))
             else:
-                return [self.element(bidegree, b) for b in self.__zigzags_basis[bidegree]]
+                already_computed_subspaces[bidegree] = AffineSubspace(vector([0]*self.dimension(bidegree)), VectorSpace(self.base(), self.dimension(bidegree)).subspace([]))
+
+        bidegrees = []
+        for k in self.total_degrees():
+            if bidegrees == []:
+                for (p,q) in self.ordered_bidegrees(k):
+                    space = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q)) + already_computed_subspaces[(p,q)].linear_part())])
+                    if space.is_empty() == False:
+                        if bidegrees == []:
+                            bidegrees.append((p,q))
+                        elif (p-1,q+1) in bidegrees:
+                            bidegrees.append((p,q))
+
+        if bidegrees == []:
+            return None
+
+        (p0, q0) = bidegrees[0]
+
+        # in this for loop we increase the length of the zigzag one unit each step
+        # (the bidegree (p,q) is the other endpoint of the zigzag)
+        last_cycle = False
+        last = {}
+        subspaces = {}
+        last_p = p0-1
+        zigzag = {}
+        carried_intersections = {}
+        if (p0,q0+1) in self.bidegrees():
+            reachable_delbar = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p0,q0+1))), AffineSubspace(vector([0]*self.dimension((p0,q0+1))), self.delbar_coboundaries_raw((p0,q0+1)).intersection(self.dell_cocycles_raw((p0,q0+1)))), [AffineSubspace(vector([0]*self.dimension((p0,q0+1))), self.delldelbar_coboundaries_raw((p0,q0+1)) + already_computed_subspaces[(p0,q0+1)].linear_part())])
+            carry = reachable_delbar.preimage(self.delbar((p0,q0))).remove_subspace(already_computed_subspaces[(p0,q0)])
+            if carry.is_empty():
+                carry = PuncturedAffineSpace.unpunctured_from_vector_space(VectorSpace(self.base(), self.dimension((p0,q0))), self.delbar_cocycles_raw((p0,q0)))
         else:
-            for bidegree in self.bidegrees():
-                self.zigzags_basis(bidegree=bidegree, raw=True)
-            if raw == True:
-                return self.__zigzags_basis
+            carry = PuncturedAffineSpace.total(VectorSpace(self.base(), self.dimension((p0,q0)))).remove_subspace(already_computed_subspaces[(p0,q0)])
+        carried_intersections[(p0,q0)] = carry
+
+        for (p,q) in bidegrees:     
+            if last_p == p0-1:
+                last = {}
+                subspaces[(p,q)] = {(p,q): PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))),
+                                    AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))),
+                                    [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q)) + already_computed_subspaces[(p,q)].linear_part())])}
+                i = p-p0
+
+                for j in range(i):
+                    subspaces[(p,q)][(p-j-1,q+j+1)] = subspaces[(p,q)][(p-j,q+j)].image(self.delbar((p-j,q+j))).preimage(self.dell((p-1-j,q+1+j))).remove_subspace(already_computed_subspaces[(p-1-j,q+1+j)])
+                #carry = carry.intersection(subspaces[(p,q)][(p0,q0)])
+                if (p-1,q+1) in subspaces:
+                    carry = carry.intersection(subspaces[(p-1,q+1)][p0,q0])
+                carried_intersections[(p,q)] = carry
+
+                # First case
+                last[(p,q)] = subspaces[(p,q)][(p,q)].intersection(PuncturedAffineSpace.unpunctured_from_vector_space(VectorSpace(self.base(), self.dimension((p,q))), self.dell_cocycles_raw((p,q)))).remove_subspace(already_computed_subspaces[(p,q)])
+                for j in range(i):
+                    last[(p-j-1,q+j+1)] = last[(p-j,q+j)].image(self.delbar((p-j,q+j))).preimage(self.dell((p-1-j,q+1+j))).remove_subspace(already_computed_subspaces[(p-1-j,q+1+j)])
+                # i don't understand the following block of code:
+                # try:
+                #     a = last[(p,q)].image(self.delbar((p,q)))
+                #     b = a.preimage(self.dell((p-1,q+1)))
+                # except:
+                #     pass
+                x = (last[(p0,q0)].intersection(carry)).get_point()
+                if x != None:
+                    last_cycle = True
+                    last_p = p
+                    zigzag[(p0,q0)] = x
+
+        # Second case
+        if last_p == p0-1:
+            last = {}
+            (p1,q1) = bidegrees[-1]
+            for i in range(p1-p0+1):
+                if last_p == p0-1:
+                    p = p1-i
+                    q = q1+i
+                    if (p+1,q) in self.bidegrees():
+                        avoid = already_computed_subspaces[(p,q)].linear_part() + self.dell_cocycles_raw((p,q)) + VectorSpace(self.base(), self.dimension((p,q))).subspace([self.dell((p,q)).solve_right(v) for v in (self.delbar_coboundaries_raw((p+1,q)).intersection(self.dell_coboundaries_raw((p+1,q)))).basis()])
+                        last[(p,q)] = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q))), AffineSubspace(vector([0]*bico.dimension((p,q))), avoid)])
+                    else:
+                        last[(p,q)] = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q))), already_computed_subspaces[(p,q)]])
+                    for j in range(p1-p0-i):
+                        last[(p-j-1,q+j+1)] = last[(p-j,q+j)].image(self.delbar((p-j,q+j))).preimage(self.dell((p-j-1,q+j+1)))
+                    intersection = last[(p0,q0)].intersection(carried_intersections[(p,q)])
+                    x = last[(p0,q0)].intersection(carried_intersections[(p,q)]).get_point()
+                    if x != None:
+                        last_p = p
+                        zigzag[(p0,q0)] = x
+
+
+        if last_p == p0-1:
+            return None
+
+        if (p0,q0+1) in self.bidegrees():
+            delbarx = self.delbar((p0,q0))*zigzag[(p0,q0)]
+            if delbarx != 0:
+                zigzag[(p0,q0+1)] = self.delbar((p0,q0))*zigzag[(p0,q0)]
+
+        if (p0+1,q0) in self.bidegrees():
+            dellx = self.dell((p0,q0))*zigzag[(p0,q0)]
+            if dellx != 0:
+                zigzag[(p0+1,q0)] = self.dell((p0,q0))*zigzag[(p0,q0)]
+
+        for p in range(p0+1,last_p+1):
+            q = p0 + q0 - p
+
+            if p != p0:
+                preimage = self.delbar((p,q)).solve_right(zigzag[(p,q+1)])
+                preimage_affine = AffineSubspace(preimage, self.delbar_cocycles_raw((p,q)))
+                carry = PuncturedAffineSpace.unpunctured(VectorSpace(self.base(), self.dimension((p,q))), preimage_affine)
             else:
-                return {bidegree: [self.element(bidegree, b) for b in self.__zigzags_basis[bidegree]] for bidegree in self.bidegrees()}
+                carry = PuncturedAffineSpace.total(VectorSpace(self.base(), self.dimension((p,q))))
 
-    def zigzags(self, bidegree=None, raw=False):
-        r"""
-        Return a vector space of zigzags at the specified bidegree.
+            for r in range(p, last_p):
+                s = p+q-r
+                carry = carry.intersection(subspaces[(r,s)][(p,q)])
 
-        INPUT:
+            zigzag[(p,q)] = carry.intersection(last[(p,q)]).get_point()
 
-        - ``bidegree`` -- tuple of two integers
+            if last_cycle == False or p != last_p:
+                zigzag[(p+1,q)] = bico.dell((p,q))*zigzag[(p,q)]
 
-        - ``raw`` -- boolean (default: ``False``)
-
-        OUTPUT:
-
-        - Vector space of zigzgas of bidegree ``bidegree``.
-        If ``raw`` is set to ``True`` (or the bigraded complex has unspecified
-        names), the basis of the vector space is made of coordinate vectors.
-        Otherwise, the basis depends on the names of the bigraded complex.
-
-        EXAMPLES:
-            
-            sage: KT.zigzags((1,1))
-            Free module generated by {b*bbar, a*abar, b*abar, a*bbar} over Number Field in I with defining polynomial x^2 + 1 with I = 1*I
-            sage: KT.zigzags((1,2), raw=True)
-            Vector space of degree 2 and dimension 2 over Number Field in I with defining polynomial x^2 + 1 with I = 1*I
-            Basis matrix:
-            [1 0]
-            [0 1]
-        """
-        if bidegree != None:
-            if raw == True or self.names() == None:
-                return VectorSpace(self.base(), self.dimension(bidegree)).subspace(self.zigzags_basis(bidegree, raw=True))
-            else:
-                return VectorSpace(self.base(), self.zigzags_basis(bidegree))
-        else:
-            return {bidegree: self.zigzags(bidegree=bidegree, raw=raw) for bidegree in self.bidegrees()}        
+        return zigzag
 
     # Compute the zigzags decomposition
-    # WARNING: THIS FUNCTION DOES NOT WORK PROPERLY!
     def zigzags_decomposition(self, raw=False):
         if raw == True:
-            endpoints_redundant = {}
-            for bidegree in self.bidegrees():
-                complementary_basis = []
-                dell_coboundaries = list(self.dell_coboundaries(bidegree=bidegree, raw=True).basis())
-                for i in range(self.dimension(bidegree)):
-                    v = vector([i == j for j in range(self.dimension(bidegree))])
-                    if v not in VectorSpace(self.base(), self.dimension(bidegree)).subspace(dell_coboundaries + complementary_basis):
-                        complementary_basis.append(v)
-                endpoints_redundant[bidegree] = self.zigzags(bidegree=bidegree, raw=True).intersection(self.delbar_cocycles(bidegree=bidegree, raw=True)).intersection(VectorSpace(self.base(), self.dimension(bidegree)).subspace(complementary_basis))
-            endpoints = {bidegree: VectorSpace(self.base(), self.dimension(bidegree)).subspace(endpoints_redundant[bidegree]).basis() for bidegree in endpoints_redundant}
-            zigzags = []
-            for bidegree in endpoints:
-                for endpoint in endpoints[bidegree]:
-                    zigzag = self.find_zigzag(bidegree, endpoint, raw=True)
-                    # TODO: Check if there are zigzags that become linearly dependent at some point
-                    # AQUÍ CAL AFEGIR-HI ALGO! ALTRAMENT ESTÀ MALAMENT LA FUNCIÓ...
-                    zigzags.append(zigzag)
-            return zigzags
+            if self.__zigzags_decomposition == None:
+                try:
+                    zigzags = []
+                    computed = {}
+                    finished = False
+                    while finished == False:
+                        zigzag = self.__find_zigzag(already_computed=computed)
+                        if zigzag == None or zigzag == {}:
+                            finished = True
+                        else:
+                            zigzags.append(zigzag)
+                            for bidegree in zigzag:
+                                if bidegree in computed:
+                                    computed[bidegree].append(zigzag[bidegree])
+                                else:
+                                    computed[bidegree] = [zigzag[bidegree]]
+                    if self._is_zigzag_decomposition(zigzags):
+                        self.__zigzags_decomposition = zigzags
+                        return zigzags
+                    else:
+                        raise BaseException("The zigzags decomposition was not computed successfully")
+                except:
+                    raise BaseException("The zigzags decomposition was not computed successfully")
+            else:
+                return self.__zigzags_decomposition
         else:
             zigzags_raw = self.zigzags_decomposition(raw=True)
             return [{bidegree: self.element(bidegree, zigzag[bidegree]) for bidegree in zigzag} for zigzag in zigzags_raw]
 
-    # Find the zigzag that contains an element
-    # Caution! The resulting zigzag has the element as the top left endpoint.
-    # Hence, in general only a truncated zigzag will be obtained.
-    def find_zigzag(self, bidegree, coordinates, raw=False, previous_data={}):
+    # Check if a zigzag is actually a zigzag
+    # Doesn't work properly... it should check if it's a MAXIMAL zigzag
+    def _is_zigzag(self, zigzag):
+        for (p,q) in zigzag:
+            if (p+1,q) in zigzag:
+                if self.dell((p,q))*zigzag[(p,q)] != zigzag[(p+1,q)]:
+                    return False
+            else:
+                if self.dell((p,q))*zigzag[(p,q)] != 0:
+                    return False
+            if (p,q+1) in zigzag:
+                if self.delbar((p,q))*zigzag[(p,q)] != zigzag[(p,q+1)]:
+                    return False
+            else:
+                if self.delbar((p,q))*zigzag[(p,q)] != 0:
+                    return False
+        return True
+
+    # Check if the given zigzag decomposition forms a zigzag decomposition
+    def _is_zigzag_decomposition(self, zigzags):
+        subcomplex = self.subcomplex({})
+        for zigzag in zigzags:
+            zigzag_subcomplex = self.subcomplex({bidegree: [zigzag[bidegree]] for bidegree in zigzag})
+            if zigzag_subcomplex.is_zigzag() == False:
+                return False
+            elif sum(subcomplex.intersection(zigzag_subcomplex).dimension(bidegree) for bidegree in self.bidegrees()) != 0:
+                return False
+            else:
+                subcomplex = zigzag_subcomplex.sum(subcomplex)
+        for bidegree in self.bidegrees():
+            if subcomplex.dimension(bidegree) != self.reduced_aeppli_cohomology_raw(bidegree).rank() + self.bottchern_cohomology_raw(bidegree).rank():
+                return False
+        return True
+
+    # Return the (a) subcomplex of zigzags
+    def zigzags_subcomplex(self):
+        basis = {bidegree: [] for bidegree in self.bidegrees()}
+        for zigzag in self.zigzags_decomposition(raw=True):
+            for bidegree in zigzag:
+                basis[bidegree].append(zigzag[bidegree])
+        return self.subcomplex(basis)
+
+    # Return the (a) basis of zigzags
+    def zigzags_basis(self, bidegree=None, raw=False):
         if raw == True:
-            (p,q) = bidegree
-            if coordinates in self.dell_and_delbar_cocycles(bidegree, raw=True):
-                # It is a sink
-                if previous_data == {}:
-                    zigzag = {bidegree:coordinates}
-                else:
-                    zigzag = previous_data
-                next_source = self.__next_source(bidegree, coordinates)
-                if next_source != 0:
-                    zigzag[(p,q-1)] = next_source
-                    zigzag = self.find_zigzag((p,q-1), next_source, raw=True, previous_data=zigzag)
-            elif coordinates in self.delldelbar_cocycles(bidegree, raw=True):
-                # It is a source
-                if previous_data == {}:
-                    zigzag = {bidegree:coordinates}
-                else:
-                    zigzag = previous_data
-                next_sink = self.__next_sink(bidegree, coordinates)
-                if next_sink != 0:
-                    zigzag[(p+1,q)] = next_sink
-                    zigzag = self.find_zigzag((p+1,q), next_sink, raw=True, previous_data=zigzag)
-            return zigzag
-        if raw == False:
-            raw_zigzag = self.find_zigzag(bidegree, coordinates, raw=True, zigzag={})
-            return {bidegree: self.element(bidegree, raw_zigzag[bidegree]) for bidegree in raw_zigzag}
+            zigzags_subcomplex = self.zigzags_subcomplex()
+            if bidegree == None:
+                return {bidegree: [v for v in zigzags_subcomplex.subspace(bidegree).basis()] for bidegree in self.bidegrees()}
+            else:
+                return [v for v in zigzags_subcomplex.subspace(bidegree).basis()]
+        else:
+            basis = self.zigzags_basis(bidegree=bidegree, raw=True)
+            if bidegree == None:
+                return {bidegree: [self.element(bidegree, v) for v in basis[bidegree]] for bidegre in self.bidegrees()}
+            else:
+                return [self.element(bidegree, v) for v in basis]
 
-    # Find the source following the given element (in a zigzag)
-    def __next_source(self, bidegree, element):
-        (p,q) = bidegree
-        try: return self.delbar((p,q-1)).solve_right(element)
-        except: return 0
 
-    # Find the sink following the given element (in a zigzag)
-    def __next_sink(self, bidegree, element):
-        return self.dell(bidegree)*element
+    # Compute the shapes of the zigzags in the zigzag decomposition
+    # The shapes are expressed in the notation from "On the structure of double complexes", section 2 (by Jonas Stelzig)
+    def zigzags_shapes(self, raw=False):
+        zigzags = self.zigzags_decomposition(raw=raw)
+        zigzags_even = {}
+        zigzags_odd = {}
+        for zigzag in zigzags:
+            total_degrees = {}
+            length = len(zigzag)
+            top_corner_p = None
+            top_corner_q = None
+            bot_corner_p = None
+            bot_corner_q = None
+            for (p,q) in zigzag:
+                if p+q in total_degrees:
+                    total_degrees[p+q] += 1
+                else:
+                    total_degrees[p+q] = 1
+                if top_corner_p == None or p < top_corner_p or q > top_corner_q:
+                    top_corner_p = p
+                    top_corner_q = q
+                if bot_corner_p == None or p > bot_corner_p or q < bot_corner_q:
+                    bot_corner_p = p
+                    bot_corner_q = q
+
+            # Even zigzag
+            if length % 2 == 0:
+                if (top_corner_p + 1, top_corner_q) in zigzag:
+                    i = 1
+                else:
+                    i = 2
+                r = length/2
+                if (top_corner_p, top_corner_q, i, length) in zigzags_even:
+                    zigzags_even[(top_corner_p, top_corner_q, i, length)].append(zigzag[(top_corner_p, top_corner_q)])
+                else:
+                    zigzags_even[(top_corner_p, top_corner_q, i, length)] = [zigzag[(top_corner_p, top_corner_q)]]
+            # Odd zigzag
+            else:
+                # Dot
+                if len(total_degrees) == 1:
+                    if (top_corner_p, top_corner_q, top_corner_p+top_corner_q) in zigzags_odd:
+                        zigzags_odd[(top_corner_p, top_corner_q, top_corner_p+top_corner_q)].append(zigzag[(top_corner_p, top_corner_q)])
+                    else:
+                        zigzags_odd[(top_corner_p, top_corner_q, top_corner_p+top_corner_q)] = [zigzag[(top_corner_p, top_corner_q)]]
+                # Proper zigzag
+                else:
+                    [deg1, deg2] = list(total_degrees.keys())
+                    if total_degrees[deg1] > total_degrees[deg2]:
+                        d = deg1
+                        if deg2 > deg1:
+                            data = (top_corner_p, bot_corner_q, d)
+                            
+                        else:
+                            data = (bot_corner_p, top_corner_q, d)
+                    else:
+                        d = deg2
+                        if deg1 > deg2:
+                            data = (top_corner_p, bot_corner_q, d)
+                        else:
+                            data = (bot_corner_p, top_corner_q, d)
+                    if data in zigzags_odd:
+                        zigzags_odd[data].append(zigzag[(top_corner_p, top_corner_q)])
+                    else:
+                        zigzags_odd[data] = [zigzag[(top_corner_p, top_corner_q)]]
+
+        return (zigzags_even, zigzags_odd)
 
     # Compute an inclusion of the zigzags into the bigraded component
     def zigzags_inclusion(self, bidegree):
@@ -1913,6 +2438,8 @@ def total_degrees(self):
         zigzags_bicpx = BigradedComplex(self.base(), dell, delbar, names=names)
 
         return zigzags_bicpx, BigradedComplexMap(zigzags_bicpx, self, inclusion), BigradedComplexMap(self, zigzags_bicpx, projection), BigradedComplexMap(self, self, homotopy, bidegree=(-1,-1))
+
+######################## Squares ###########################
 
     # Squares
     def squares_basis(self, bidegree=None, raw=False):
@@ -2148,6 +2675,10 @@ def total_degrees(self):
         total_width = 0
         string = {}
 
+        for bidegree in self.bidegrees():
+            if bidegree not in data:
+                data[bidegree] = []
+
         for (p,q) in self.__dimension:
             n = len(data[(p,q)])
             string[(p,q)] = [""]
@@ -2280,6 +2811,27 @@ def total_degrees(self):
         print("Squares:\n")
         self.__ascii_art_table({bidegree: self.squares_basis(bidegree) for bidegree in self.bidegrees()}, n_generators_row)
 
+    def _ascii_art_zigzags_decomposition(self, raw=False):
+        zigzags = self.zigzags_decomposition(raw=raw)
+        count = 1
+        for zigzag in zigzags:
+            print("Zigzag #" + str(count) + ": \n")
+            self.__ascii_art_table({bidegree: [zigzag[bidegree]] for bidegree in zigzag}, n_generators_row=-1)
+            print("\n\n")
+            count += 1
+
+    def _ascii_art_dots(self, n_generators_row=-1):
+        zigzags = self.zigzags_decomposition()
+        dots = {}
+        for zigzag in zigzags:
+            if len(zigzag) == 1:
+                for bidegree in zigzag:
+                    if bidegree in dots:
+                        dots[bidegree].append(zigzag[bidegree])
+                    else:
+                        dots[bidegree] = [zigzag[bidegree]]
+        self.__ascii_art_table(dots, n_generators_row=n_generators_row)
+
     def _ascii_art_spectral_sequence(self, r, n_generators_row=-1):
         self.__ascii_art_table({bidegree: self.spectral_sequence_basis(r, bidegree[0], bidegree[1]) for bidegree in self.bidegrees()}, n_generators_row=n_generators_row)
 
@@ -2411,6 +2963,136 @@ class BigradedComplexMap():
                 else:
                     print("\t" + str(x) + " "*(max_length+2-length) + "|---->  0")
             print("\n")
+
+# BigradedSubcomplex
+class BigradedSubcomplex(BigradedComplex):
+    def __init__(self, basis, parent):
+        self.__parent = parent
+
+        new_basis = {bidegree: [] for bidegree in basis}
+        for (p,q) in basis:
+            for x in basis[(p,q)]:
+                new_basis[(p,q)].append(x)
+                dellx = self.__parent.dell((p,q))*x
+                delbarx = self.__parent.delbar((p,q))*x
+                delldelbarx = self.__parent.delldelbar((p,q))*x
+                if dellx != 0:
+                    if (p+1,q) not in new_basis:
+                        new_basis[(p+1,q)] = [dellx]
+                    else:
+                        new_basis[(p+1,q)].append(dellx)
+                if delbarx != 0:
+                    if (p,q+1) not in new_basis:
+                        new_basis[(p,q+1)] = [delbarx]
+                    else:
+                        new_basis[(p,q+1)].append(delbarx)
+                if delldelbarx != 0:
+                    if (p+1,q+1) not in new_basis:
+                        new_basis[(p+1,q+1)] = [delldelbarx]
+                    else:
+                        new_basis[(p+1,q+1)].append(delldelbarx)
+
+        self.__subspace = {bidegree: VectorSpace(self.__parent.base(), self.__parent.dimension(bidegree)).subspace(new_basis[bidegree]) for bidegree in new_basis}
+        dell = {}
+        delbar = {}
+        for (p,q) in self.__subspace:
+            if (p+1,q) not in self.__subspace:
+                dell[(p,q)] = Matrix(self.__parent.base(), 0, self.__subspace[(p,q)].rank())
+            else:
+                dell[(p,q)] = Matrix(self.__parent.base(), [self.__subspace[(p+1,q)].coordinates(self.__parent.dell((p,q))*x) for x in self.__subspace[(p,q)].basis()]).transpose()
+            if (p,q+1) not in self.__subspace:
+                delbar[(p,q)] = Matrix(self.__parent.base(), 0, self.__subspace[(p,q)].rank())
+            else:
+                delbar[(p,q)] = Matrix(self.__parent.base(), [self.__subspace[(p,q+1)].coordinates(self.__parent.delbar((p,q))*x) for x in self.__subspace[(p,q)].basis()]).transpose()
+
+        if self.__parent.names() != None:
+            names = {bidegree: ["(" + str(self.__parent.element(bidegree, x)) + ")" for x in self.__subspace[bidegree].basis()] for bidegree in self.__subspace}
+        else:
+            names = None
+
+        BigradedComplex.__init__(self, self.__parent.base(), dell, delbar, names=names)
+
+        inclusion_matrix = {bidegree: Matrix(self.__parent.base(), [x for x in self.__subspace[bidegree].basis()]).transpose() for bidegree in self.__subspace}
+        self.__inclusion = BigradedComplexMap(self, self.__parent, inclusion_matrix)
+
+    def subspace(self, bidegree=None):
+        if bidegree == None:
+            return self.__subspace
+        else:
+            if bidegree in self.bidegrees():
+                return self.__subspace[bidegree]
+            else:
+                return VectorSpace(self.base(), self.parent().dimension(bidegree)).subspace([])
+
+    def inclusion(self):
+        return self.__inclusion
+
+    def parent(self):
+        return self.__parent
+
+    def parent_element(self, bidegree, element, raw=True):
+        return self.__inclusion(bidegree, element, raw=raw)
+
+    def element(self, bidegree, element):
+        return self.parent().element(bidegree, self.parent_element(bidegree, element))
+
+    def intersection(self, subcomplex):
+        intersection_subspace = {}
+        for bidegree in self.bidegrees():
+            if bidegree in subcomplex.bidegrees():
+                intersection_subspace[bidegree] = self.subspace(bidegree=bidegree).intersection(subcomplex.subspace(bidegree=bidegree))
+        return self.parent().subcomplex({bidegree: intersection_subspace[bidegree].basis() for bidegree in intersection_subspace})
+
+    def sum(self, subcomplex):
+        sum_subspace = {}
+        for bidegree in self.bidegrees():
+            if bidegree in subcomplex.bidegrees():
+                sum_subspace[bidegree] = self.subspace(bidegree=bidegree) + subcomplex.subspace(bidegree=bidegree)
+            else:
+                sum_subspace[bidegree] = self.subspace(bidegree=bidegree)
+        for bidegree in subcomplex.bidegrees():
+            if bidegree not in sum_subspace:
+                if bidegree in self.bidegrees():
+                    sum_subspace[bidegree] = self.subspace(bidegree=bidegree) + subcomplex.subspace(bidegree=bidegree)
+                else:
+                    sum_subspace[bidegree] = subcomplex.subspace(bidegree=bidegree)
+        return self.parent().subcomplex({bidegree: sum_subspace[bidegree].basis() for bidegree in sum_subspace})
+
+    #Check if the subcomplex is a zigzag
+    def is_zigzag(self):
+        # TODO: remains to be checked if the zigzag is part of a square!
+        # (isn't it already done?)
+        if len(self.bidegrees()) == 0:
+            return False
+        elif len(self.bidegrees()) == 1:
+            return self.dimension(self.bidegrees()[0]) == 1
+        else:
+            total_degrees = self.total_degrees()
+            bidegrees = self.ordered_bidegrees()
+            if len(total_degrees) != 2:
+                return False
+            if total_degrees[1] != total_degrees[0]+1:
+                return False
+            for (p,q) in self.bidegrees():
+                if self.dimension((p,q)) != 1:
+                    return False
+            (r,s) = bidegrees[total_degrees[0]][0]
+            (u,v) = bidegrees[total_degrees[0]][-1]
+            for (p,q) in bidegrees[total_degrees[0]]:
+                if (p,q) == (r,s):
+                    if (r,s) != (u,v):
+                        if (r+1,s) not in self.bidegrees() or self.dell((r,s)) == 0:
+                            return False
+                elif (p,q) == (u,v):
+                    if (u,v+1) not in self.bidegrees() or self.delbar((u,v)) == 0:
+                        return False
+                else:
+                    if (p+1,q) not in self.bidegrees() or (p,q+1) not in self.bidegrees() or self.dell((p,q)) == 0 or self.delbar((p,q)) == 0:
+                        return False
+            for (p,q) in bidegrees[total_degrees[0]]:
+                if (self.parent().dell_coboundaries_raw((p,q)) + self.parent().delbar_coboundaries_raw((p,q))).intersection(self.subspace((p,q))).rank() != 0:
+                    return False
+            return True
 
 # BidifferentialBigradedAlgebra
 class BidifferentialBigradedCommutativeAlgebra(BigradedComplex):
@@ -2815,12 +3497,14 @@ class BidifferentialBigradedCommutativeAlgebraExample():
             names = ['a','b','c','abar','bbar','cbar']
         return BidifferentialBigradedCommutativeAlgebra.from_nilmanifold(lie_algebra, acs, names, normalization_coefficients=[1/2,1,1,1/2,1,1])
 
-    @staticmethod
-    def ST_nilmanifold():
-        Iwasawa = BidifferentialBigradedCommutativeAlgebraExample.Iwasawa()
-        basis = []
-        for bidegree in Iwasawa.bidegrees():
-            basis += Iwasawa.algebra().basis(bidegree)
+    # TODO: does not work
+    # Orbifold defined in "Dolbeault and Bott-Chern formalities: deformations and dell-delbar lemma", by Tomasso Sferruzza and Adriano Tomassini
+    # @staticmethod
+    # def SferruzzaTomassini_orbifold():
+    #     Iwasawa = BidifferentialBigradedCommutativeAlgebraExample.Iwasawa()
+    #     basis = []
+    #     for bidegree in Iwasawa.bidegrees():
+    #         basis += Iwasawa.algebra().basis(bidegree)
         
-        generators = [basis[11], basis[15], basis[19], basis[14], basis[12], basis[22], basis[41], basis[56], basis[7]]
-        return Iwasawa.subalgebra(generators)
+    #     generators = [basis[11], basis[15], basis[19], basis[14], basis[12], basis[22], basis[41], basis[56], basis[7]]
+    #     return Iwasawa.subalgebra(generators)
