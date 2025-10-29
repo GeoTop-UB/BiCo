@@ -2170,7 +2170,7 @@ class BigradedComplex():
                     q = q1+i
                     if (p+1,q) in self.bidegrees():
                         avoid = already_computed_subspaces[(p,q)].linear_part() + self.dell_cocycles_raw((p,q)) + VectorSpace(self.base(), self.dimension((p,q))).subspace([self.dell((p,q)).solve_right(v) for v in (self.delbar_coboundaries_raw((p+1,q)).intersection(self.dell_coboundaries_raw((p+1,q)))).basis()])
-                        last[(p,q)] = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q))), AffineSubspace(vector([0]*bico.dimension((p,q))), avoid)])
+                        last[(p,q)] = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), avoid)])
                     else:
                         last[(p,q)] = PuncturedAffineSpace(VectorSpace(self.base(), self.dimension((p,q))), AffineSubspace(vector([0]*self.dimension((p,q))), self.delldelbar_cocycles_raw((p,q))), [AffineSubspace(vector([0]*self.dimension((p,q))), self.dell_coboundaries_raw((p,q)) + self.delbar_coboundaries_raw((p,q))), already_computed_subspaces[(p,q)]])
                     for j in range(p1-p0-i):
@@ -2212,7 +2212,7 @@ class BigradedComplex():
             zigzag[(p,q)] = carry.intersection(last[(p,q)]).get_point()
 
             if last_cycle == False or p != last_p:
-                zigzag[(p+1,q)] = bico.dell((p,q))*zigzag[(p,q)]
+                zigzag[(p+1,q)] = self.dell((p,q))*zigzag[(p,q)]
 
         return zigzag
 
