@@ -3107,15 +3107,13 @@ class BidifferentialBigradedCommutativeAlgebra(BigradedComplex):
         self.__min_deg = min_deg
         self.__max_deg = max_deg
 
-        dictionary_is_matrix = (dell_dictionary[list(dell_dictionary.keys())[0]] not in algebra)
-
+        if dell_dictionary != {}:
+            dell_differential = self.__algebra.differential(dell_dictionary)
+        if delbar_dictionary != {}:
+            delbar_differential = self.__algebra.differential(delbar_dictionary)
+        dell_matrix = {}
+        delbar_matrix = {}
         bigraded_basis = {}
-        if dictionary_is_matrix:
-            dell_matrix = dell_dictionary
-            delbar_matrix = delbar_dictionary
-        else:
-            dell_matrix = {}
-            delbar_matrix = {}
         for p in range(self.__min_deg, self.__max_deg+1):
             for q in range(self.__min_deg, self.__max_deg+1):
                 basis = self.__algebra.basis((p,q))
@@ -3123,9 +3121,15 @@ class BidifferentialBigradedCommutativeAlgebra(BigradedComplex):
                     bigraded_basis[(p,q)] = basis
 
                     # Compute the differential matrices
-                    if not dictionary_is_matrix:
-                        dell_matrix[(p,q)] = self.__algebra.differential(dell_dictionary).differential_matrix_multigraded((p,q)).transpose()
-                        delbar_matrix[(p,q)] = self.__algebra.differential(delbar_dictionary).differential_matrix_multigraded((p,q)).transpose()
+                    #if not dictionary_is_matrix:
+                    if dell_dictionary == {}:
+                        dell_matrix[(p,q)] = Matrix(self.__algebra.base(), len(self.__algebra.basis((p+1,q))), len(basis))
+                    else:
+                        dell_matrix[(p,q)] = dell_differential.differential_matrix_multigraded((p,q)).transpose()
+                    if delbar_dictionary == {}:
+                        delbar_matrix[(p,q)] = Matrix(self.__algebra.base(), len(self.__algebra.basis((p,q+1))), len(basis))
+                    else:
+                        delbar_matrix[(p,q)] = delbar_differential.differential_matrix_multigraded((p,q)).transpose()
 
         BigradedComplex.__init__(self, self.__algebra.base(), dell_matrix, delbar_matrix, names=bigraded_basis)
 
