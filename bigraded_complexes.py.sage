@@ -3107,9 +3107,20 @@ class BidifferentialBigradedCommutativeAlgebra(BigradedComplex):
         self.__min_deg = min_deg
         self.__max_deg = max_deg
 
-        if dell_dictionary != {}:
+        zero_dell_differential = True
+        for x in dell_dictionary:
+            if dell_dictionary[x] != 0:
+                zero_dell_differential = False
+                break
+        zero_delbar_differential = True
+        for x in delbar_dictionary:
+            if delbar_dictionary[x] != 0:
+                zero_delbar_differential = False
+                break
+
+        if zero_dell_differential == False:
             dell_differential = self.__algebra.differential(dell_dictionary)
-        if delbar_dictionary != {}:
+        if zero_delbar_differential == False:
             delbar_differential = self.__algebra.differential(delbar_dictionary)
         dell_matrix = {}
         delbar_matrix = {}
@@ -3121,12 +3132,11 @@ class BidifferentialBigradedCommutativeAlgebra(BigradedComplex):
                     bigraded_basis[(p,q)] = basis
 
                     # Compute the differential matrices
-                    #if not dictionary_is_matrix:
-                    if dell_dictionary == {}:
+                    if zero_dell_differential:
                         dell_matrix[(p,q)] = Matrix(self.__algebra.base(), len(self.__algebra.basis((p+1,q))), len(basis))
                     else:
                         dell_matrix[(p,q)] = dell_differential.differential_matrix_multigraded((p,q)).transpose()
-                    if delbar_dictionary == {}:
+                    if zero_delbar_differential:
                         delbar_matrix[(p,q)] = Matrix(self.__algebra.base(), len(self.__algebra.basis((p,q+1))), len(basis))
                     else:
                         delbar_matrix[(p,q)] = delbar_differential.differential_matrix_multigraded((p,q)).transpose()
